@@ -1173,8 +1173,7 @@ void groupGenerate(const std::string &rule, std::vector<Proxy> &nodelist,
 void proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode,
                   const ProxyGroupConfigs &extra_proxy_group, bool clashR,
                   extra_settings &ext) {
-  YAML::Node proxies;
-  YAML::Node original_groups(YAML::NodeType::Sequence);
+  YAML::Node proxies, original_groups;
   const char *group_key =
       ext.clash_new_field_name ? "proxy-groups" : "Proxy Group";
   if (yamlnode[group_key].IsSequence())
