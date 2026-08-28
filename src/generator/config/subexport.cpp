@@ -1883,6 +1883,32 @@ void proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode,
                  " 个 proxy provider。");
   }
 
+  // Base templates may carry Mihomo-only options that the legacy
+  // custom_proxy_group syntax cannot express.  A custom group with the same
+  // name still owns its position and membership: keep unmatched Base groups in
+  // their original order, then emit all custom groups in INI order while using
+  // the matching Base group only as an option overlay.
+  std::unordered_set<std::string> custom_group_names;
+  custom_group_names.reserve(extra_proxy_group.size());
+  for (const ProxyGroupConfig &group : extra_proxy_group)
+    custom_group_names.emplace(group.Name);
+
+  std::unordered_map<std::string, YAML::Node> base_group_overlays;
+  base_group_overlays.reserve(custom_group_names.size());
+  YAML::Node ordered_groups(YAML::NodeType::Sequence);
+  if (original_groups.IsSequence()) {
+    for (const YAML::Node &group : original_groups) {
+      if (group.IsMap() && group["name"].IsScalar()) {
+        const std::string name = group["name"].as<std::string>();
+        if (custom_group_names.find(name) != custom_group_names.end()) {
+          base_group_overlays[name] = YAML::Clone(group);
+          continue;
+        }
+      }
+      ordered_groups.push_back(YAML::Clone(group));
+    }
+  }
+
   for (const ProxyGroupConfig &x : extra_proxy_group) {
     YAML::Node singlegroup;
     string_array filtered_nodelist;
@@ -2003,31 +2029,39 @@ void proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode,
     }
     if (!filtered_nodelist.empty())
       singlegroup["proxies"] = filtered_nodelist;
+
+    const auto base_group = base_group_overlays.find(x.Name);
+    if (base_group != base_group_overlays.end()) {
+      YAML::Node merged = YAML::Clone(base_group->second);
+
+      // Membership is generated from the INI rule/provider selectors.  Never
+      // retain stale Base membership while carrying forward advanced Mihomo
+      // options such as timeout, max-failed-times and expected-status.
+      for (const char *key : {"proxies", "use", "include-all",
+                              "include-all-proxies",
+                              "include-all-providers", "filter"})
+        merged.remove(key);
+
+      for (const auto &entry : singlegroup)
+        merged[entry.first.as<std::string>()] = YAML::Clone(entry.second);
+      singlegroup = merged;
+    }
+
     if (group_block)
       singlegroup.SetStyle(YAML::EmitterStyle::Block);
     else
       singlegroup.SetStyle(YAML::EmitterStyle::Flow);
 
-    bool replace_flag = false;
-    for (auto &&original_group : original_groups) {
-      if (original_group.IsMap() && original_group["name"].IsScalar() &&
-          original_group["name"].as<std::string>() == x.Name) {
-        original_group.reset(singlegroup);
-        replace_flag = true;
-        break;
-      }
-    }
-    if (!replace_flag)
-      original_groups.push_back(singlegroup);
+    ordered_groups.push_back(singlegroup);
   }
   if (group_compact)
-    original_groups.SetStyle(YAML::EmitterStyle::Flow);
+    ordered_groups.SetStyle(YAML::EmitterStyle::Flow);
 
-  // 生成 proxy-groups 配置段
-  if (ext.clash_new_field_name)
-    yamlnode["proxy-groups"] = original_groups;
+  // 生成 proxy-groups 配置段；没有 Base 组和自定义组时保持字段缺省。
+  if (ordered_groups.size() > 0)
+    yamlnode[group_key] = ordered_groups;
   else
-    yamlnode["Proxy Group"] = original_groups;
+    yamlnode.remove(group_key);
 }
 
 std::string proxyToClash(std::vector<Proxy> &nodes,

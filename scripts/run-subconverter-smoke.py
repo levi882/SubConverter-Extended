@@ -228,6 +228,38 @@ SELECT_HEALTH_CONFIG = "data:text/plain;base64," + base64.urlsafe_b64encode(
         )
     ).encode()
 ).decode("ascii")
+ORDERED_FALLBACK_BASE = "data:text/plain;base64," + base64.urlsafe_b64encode(
+    b"\n".join(
+        (
+            b"proxies: []",
+            b"proxy-groups:",
+            b"  - name: Fallback",
+            b"    type: fallback",
+            b"    proxies: [StaleBaseMember]",
+            b"    include-all-proxies: true",
+            b"    exclude-filter: HK",
+            b"    timeout: 1000",
+            b"    max-failed-times: 1",
+            b"    lazy: false",
+            b"    expected-status: 204",
+            b"rules: []",
+        )
+    )
+).decode("ascii")
+ORDERED_FALLBACK_CONFIG = "data:text/plain;base64," + base64.urlsafe_b64encode(
+    b"\n".join(
+        (
+            b"[custom]",
+            b"enable_rule_generator=false",
+            b"custom_proxy_group=Manual`select`[]Auto`[]Fallback`.*",
+            b"custom_proxy_group=Auto`url-test`.*`"
+            b"https://www.gstatic.com/generate_204`300,,50",
+            b"custom_proxy_group=Fallback`fallback`.*`"
+            b"https://www.gstatic.com/generate_204`60",
+            ("clash_rule_base=" + ORDERED_FALLBACK_BASE).encode(),
+        )
+    )
+).decode("ascii")
 QUANX_REMOTE_CONFIG = "data:text/plain;base64," + base64.urlsafe_b64encode(
     b"enable_rule_generator=false\ncustom_proxy_group=Remote`select`.*\n"
 ).decode("ascii")
@@ -520,6 +552,57 @@ def assert_select_health_check(
             raise AssertionError(
                 f"select health {label} did not exercise the intended provider mode"
             )
+
+
+def assert_ordered_fallback_base_overlay(
+    base_url: str, timeout: int, remote_subscription_url: str | None
+) -> None:
+    if not remote_subscription_url:
+        return
+
+    output = fetch(
+        base_url,
+        "/sub",
+        {
+            "target": "clash",
+            "url": f"provider:Ordered,{remote_subscription_url}",
+            "config": ORDERED_FALLBACK_CONFIG,
+        },
+        timeout,
+    )
+    group_names = re.findall(r"(?m)^  - name: ([^\r\n]+)$", output)
+    if group_names != ["Manual", "Auto", "Fallback"]:
+        raise AssertionError(
+            "custom proxy-group order no longer follows INI order: "
+            f"{group_names!r}\n{output}"
+        )
+
+    block = proxy_group_block_from_output(output, "Fallback")
+    if proxy_group_use_from_output(output, "Fallback") != ["Ordered"]:
+        raise AssertionError(
+            "fallback did not load concrete nodes from the generated provider\n"
+            + block
+        )
+    if proxy_group_filter_from_output(output, "Fallback") != ".*":
+        raise AssertionError("fallback lost its INI node filter\n" + block)
+
+    expected_fields = (
+        "    type: fallback",
+        "    exclude-filter: HK",
+        "    timeout: 1000",
+        "    max-failed-times: 1",
+        "    lazy: false",
+        "    expected-status: 204",
+        "    interval: 60",
+    )
+    missing = [field for field in expected_fields if field not in block]
+    forbidden = ("StaleBaseMember", "include-all-proxies:", "    proxies:")
+    unexpected = [field for field in forbidden if field in block]
+    if missing or unexpected:
+        raise AssertionError(
+            "fallback Base option overlay changed: "
+            f"missing={missing!r}, unexpected={unexpected!r}\n{block}"
+        )
 
 
 def assert_snapshot(name: str, content: str, snapshot_dir: Path | None, update: bool) -> None:
@@ -964,6 +1047,9 @@ def run_checks(
 
     assert_local_group_matcher_matrix(base_url, timeout)
     assert_select_health_check(base_url, timeout, remote_subscription_url)
+    assert_ordered_fallback_base_overlay(
+        base_url, timeout, remote_subscription_url
+    )
 
     if verify_non_clash:
         assert_parser_route_isolation(base_url, timeout)
