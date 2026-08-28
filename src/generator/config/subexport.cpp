@@ -230,6 +230,11 @@ static void insertProxyProvidersBeforeGroups(std::string &yaml_str,
   size_t groups_pos = yaml_str.find(groups_key);
   if (groups_pos != std::string::npos) {
     yaml_str.insert(groups_pos, providers_str);
+  } else {
+    if (!yaml_str.empty() && yaml_str.back() != '\n') {
+      yaml_str += "\n";
+    }
+    yaml_str += providers_str;
   }
 }
 
@@ -274,6 +279,11 @@ static void insertProxiesBeforeTarget(std::string &yaml_str,
   size_t target_pos = yaml_str.find(target_key);
   if (target_pos != std::string::npos) {
     yaml_str.insert(target_pos, proxies_str);
+  } else {
+    if (!yaml_str.empty() && yaml_str.back() != '\n') {
+      yaml_str += "\n";
+    }
+    yaml_str += proxies_str;
   }
 }
 
