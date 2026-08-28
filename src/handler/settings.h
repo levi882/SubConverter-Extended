@@ -173,6 +173,12 @@ struct ExternalConfig {
   bool enable_rule_generator = true;
   tribool add_emoji;
   tribool remove_old_emoji;
+  tribool proxy_provider_health_check_enable;
+  std::string proxy_provider_health_check_url;
+  int proxy_provider_health_check_interval = -1;
+  int proxy_provider_health_check_timeout = -1;
+  tribool proxy_provider_health_check_lazy;
+  int proxy_provider_health_check_expected_status = -1;
 };
 
 enum class ExternalConfigLoadStatus {

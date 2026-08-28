@@ -577,6 +577,14 @@ static bool hasEffectiveExternalConfig(const ExternalConfig &extconf,
   if (!extconf.add_emoji.is_undef() || !extconf.remove_old_emoji.is_undef())
     return true;
 
+  if (!extconf.proxy_provider_health_check_enable.is_undef() ||
+      !extconf.proxy_provider_health_check_url.empty() ||
+      extconf.proxy_provider_health_check_interval >= 0 ||
+      extconf.proxy_provider_health_check_timeout >= 0 ||
+      !extconf.proxy_provider_health_check_lazy.is_undef() ||
+      extconf.proxy_provider_health_check_expected_status >= 0)
+    return true;
+
   if (!extconf.enable_rule_generator || extconf.overwrite_original_rules)
     return true;
 
@@ -3839,6 +3847,24 @@ static std::string buildExternalConfigFetchPlan(
       if (requested_config)
         policy.requested_remote_node_filter = true;
     }
+    if (!extconf.proxy_provider_health_check_enable.is_undef())
+      policy.generator.provider_health_check_enable =
+          extconf.proxy_provider_health_check_enable.get();
+    if (!extconf.proxy_provider_health_check_url.empty())
+      policy.generator.provider_health_check_url =
+          extconf.proxy_provider_health_check_url;
+    if (extconf.proxy_provider_health_check_interval >= 0)
+      policy.generator.provider_health_check_interval =
+          extconf.proxy_provider_health_check_interval;
+    if (extconf.proxy_provider_health_check_timeout >= 0)
+      policy.generator.provider_health_check_timeout =
+          extconf.proxy_provider_health_check_timeout;
+    if (!extconf.proxy_provider_health_check_lazy.is_undef())
+      policy.generator.provider_health_check_lazy =
+          extconf.proxy_provider_health_check_lazy;
+    if (extconf.proxy_provider_health_check_expected_status >= 0)
+      policy.generator.provider_health_check_expected_status =
+          extconf.proxy_provider_health_check_expected_status;
     if (requested_config &&
         (extconf.add_emoji.get(false) ||
          extconf.remove_old_emoji.get(false)))

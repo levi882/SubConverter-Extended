@@ -1,0 +1,166 @@
+name: Build amd64 image to GHCR
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: build-amd64-ghcr-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and publish linux/amd64
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require master branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/master"
+
+      - name: Resolve build metadata
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/build_metadata.py \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Validate and export dependency snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/dependency_snapshot.py check
+          python3 scripts/ci/dependency_snapshot.py emit \
+            --github-env "$GITHUB_ENV"
+
+      - name: Resolve image name
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          repository="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "name=$repository" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=sha-${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+
+      - name: Prepare Docker build arguments
+        id: docker_args
+        shell: bash
+        env:
+          THREADS: "16"
+          SHA: ${{ steps.metadata.outputs.sha }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+          BUILD_DATE: ${{ steps.metadata.outputs.build_date }}
+          REFRESH_GO_DEPS: "false"
+          REFRESH_HEADERS: "false"
+          BUILD_TESTS: "true"
+        run: |
+          {
+            echo 'args<<EOF'
+            bash scripts/ci/docker-build-args.sh
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and run complete test suite
+        id: build_image
+        shell: bash
+        env:
+          BUILD_ARGS: ${{ steps.docker_args.outputs.args }}
+        run: |
+          bash scripts/ci/build-candidate-image.sh \
+            amd64 \
+            ./Dockerfile \
+            linux/amd64
+
+      - name: Smoke test image
+        timeout-minutes: 5
+        uses: ./.github/actions/smoke-docker-image
+        with:
+          image: subconverter-extended:amd64-ci
+          platform: linux/amd64
+          expected-version: ${{ steps.metadata.outputs.version }}
+          expected-revision: ${{ steps.metadata.outputs.sha }}
+          expected-build-date: ${{ steps.metadata.outputs.build_date }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Push tested amd64 image
+        id: publish
+        shell: bash
+        env:
+          IMAGE_NAME: ${{ steps.image.outputs.name }}
+          SHA_TAG: ${{ steps.image.outputs.sha_tag }}
+        run: |
+          set -euo pipefail
+          local_image="subconverter-extended:amd64-ci"
+          tags=(
+            "$IMAGE_NAME:latest"
+            "$IMAGE_NAME:amd64"
+            "$IMAGE_NAME:$SHA_TAG"
+          )
+
+          for tag in "${tags[@]}"; do
+            docker tag "$local_image" "$tag"
+            docker push "$tag"
+          done
+
+          digest="$(docker image inspect \
+            --format '{{index .RepoDigests 0}}' \
+            "$IMAGE_NAME:latest" | cut -d@ -f2)"
+          test -n "$digest"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Verify published platform
+        shell: bash
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}:latest
+          EXPECTED_REVISION: ${{ steps.metadata.outputs.sha }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect "$IMAGE" > manifest.txt
+          cat manifest.txt
+          docker pull --platform linux/amd64 "$IMAGE"
+          actual_platform="$(docker image inspect \
+            --format '{{.Os}}/{{.Architecture}}' \
+            "$IMAGE")"
+          test "$actual_platform" = "linux/amd64"
+          actual_revision="$(docker image inspect \
+            --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' \
+            "$IMAGE")"
+          test "$actual_revision" = "$EXPECTED_REVISION"
+
+      - name: Summarize image
+        shell: bash
+        env:
+          IMAGE_NAME: ${{ steps.image.outputs.name }}
+          SHA_TAG: ${{ steps.image.outputs.sha_tag }}
+          DIGEST: ${{ steps.publish.outputs.digest }}
+        run: |
+          {
+            echo '### Published linux/amd64 image'
+            echo
+            echo "- \`$IMAGE_NAME:latest\`"
+            echo "- \`$IMAGE_NAME:amd64\`"
+            echo "- \`$IMAGE_NAME:$SHA_TAG\`"
+            echo "- Digest: \`$DIGEST\`"
+          } >> "$GITHUB_STEP_SUMMARY"

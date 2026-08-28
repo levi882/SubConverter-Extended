@@ -2,6 +2,14 @@ custom:
   enable_rule_generator: false
   overwrite_original_rules: false
 
+  # Mihomo proxy-provider health check; independent from custom group checks.
+  # proxy_provider_health_check_enable: true
+  # proxy_provider_health_check_url: https://www.gstatic.com/generate_204
+  # proxy_provider_health_check_interval: 300
+  # proxy_provider_health_check_timeout: 5000
+  # proxy_provider_health_check_lazy: true
+  # proxy_provider_health_check_expected_status: 204
+
   # SubConverter-Extended-only complete Clash rules; target=clash only.
   # Traditional subconverter ignores these fields.
   # ruleprepend:

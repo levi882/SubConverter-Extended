@@ -150,6 +150,13 @@ struct extra_settings {
   std::string clash_proxy_groups_style = "flow";
   bool use_proxy_provider = true;       // 默认启用 proxy-provider 模式
   bool provider_proxy_direct = true;    // proxy-provider 默认使用 DIRECT 更新
+  bool provider_health_check_enable = true;
+  std::string provider_health_check_url =
+      "https://www.gstatic.com/generate_204";
+  int provider_health_check_interval = 300;
+  int provider_health_check_timeout = -1;
+  tribool provider_health_check_lazy;
+  int provider_health_check_expected_status = -1;
   std::vector<ProxyProvider> providers; // provider 列表
   std::vector<QuanXServerRemote> quanx_server_remotes;
   std::vector<SurgePolicyPathResource> surge_policy_paths;

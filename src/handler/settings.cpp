@@ -2064,6 +2064,21 @@ ExternalConfigLoadStatus loadExternalYAML(YAML::Node &node,
   section["overwrite_original_rules"] >> ext.overwrite_original_rules;
   section["ruleprepend"] >> ext.rule_prepend_sources;
   section["ruleappend"] >> ext.rule_append_sources;
+  if (section["proxy_provider_health_check_enable"].IsDefined())
+    ext.proxy_provider_health_check_enable =
+        safe_as<std::string>(
+            section["proxy_provider_health_check_enable"]);
+  section["proxy_provider_health_check_url"] >>
+      ext.proxy_provider_health_check_url;
+  section["proxy_provider_health_check_interval"] >>
+      ext.proxy_provider_health_check_interval;
+  section["proxy_provider_health_check_timeout"] >>
+      ext.proxy_provider_health_check_timeout;
+  if (section["proxy_provider_health_check_lazy"].IsDefined())
+    ext.proxy_provider_health_check_lazy =
+        safe_as<std::string>(section["proxy_provider_health_check_lazy"]);
+  section["proxy_provider_health_check_expected_status"] >>
+      ext.proxy_provider_health_check_expected_status;
 
   const char *group_name = section["proxy_groups"].IsDefined()
                                ? "proxy_groups"
@@ -2144,6 +2159,19 @@ ExternalConfigLoadStatus loadExternalTOML(toml::value &root,
                 "stash_rule_base", ext.stash_rule_base, "add_emoji",
                 ext.add_emoji, "remove_old_emoji", ext.remove_old_emoji,
                 "include_remarks", ext.include, "exclude_remarks", ext.exclude);
+
+  find_if_exist(
+      section, "proxy_provider_health_check_enable",
+      ext.proxy_provider_health_check_enable,
+      "proxy_provider_health_check_url", ext.proxy_provider_health_check_url,
+      "proxy_provider_health_check_interval",
+      ext.proxy_provider_health_check_interval,
+      "proxy_provider_health_check_timeout",
+      ext.proxy_provider_health_check_timeout,
+      "proxy_provider_health_check_lazy",
+      ext.proxy_provider_health_check_lazy,
+      "proxy_provider_health_check_expected_status",
+      ext.proxy_provider_health_check_expected_status);
 
   if (ext.tpl_args != nullptr)
     operate_toml_kv_table(
@@ -2255,6 +2283,20 @@ parseExternalConfigContent(const std::string &path,
   ini.get_bool_if_exist("enable_rule_generator", ext.enable_rule_generator);
   ini.get_all("ruleprepend", ext.rule_prepend_sources);
   ini.get_all("ruleappend", ext.rule_append_sources);
+  if (ini.item_exist("proxy_provider_health_check_enable"))
+    ext.proxy_provider_health_check_enable =
+        ini.get("proxy_provider_health_check_enable");
+  ini.get_if_exist("proxy_provider_health_check_url",
+                   ext.proxy_provider_health_check_url);
+  ini.get_int_if_exist("proxy_provider_health_check_interval",
+                       ext.proxy_provider_health_check_interval);
+  ini.get_int_if_exist("proxy_provider_health_check_timeout",
+                       ext.proxy_provider_health_check_timeout);
+  if (ini.item_exist("proxy_provider_health_check_lazy"))
+    ext.proxy_provider_health_check_lazy =
+        ini.get("proxy_provider_health_check_lazy");
+  ini.get_int_if_exist("proxy_provider_health_check_expected_status",
+                       ext.proxy_provider_health_check_expected_status);
 
   if (ini.item_prefix_exist("rename")) {
     string_array vArray;
@@ -2293,7 +2335,7 @@ namespace {
 constexpr size_t kExternalConfigCacheEntries = 64;
 constexpr size_t kExternalConfigCacheBytes = 8 * 1024 * 1024;
 constexpr const char *kExternalConfigParserIdentity =
-    "external-config:auto-yaml-toml-ini:v3";
+    "external-config:auto-yaml-toml-ini:v4";
 
 struct CachedExternalConfig {
   ExternalConfigLoadStatus status = ExternalConfigLoadStatus::ParseFailed;

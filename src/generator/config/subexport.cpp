@@ -1173,7 +1173,12 @@ void groupGenerate(const std::string &rule, std::vector<Proxy> &nodelist,
 void proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode,
                   const ProxyGroupConfigs &extra_proxy_group, bool clashR,
                   extra_settings &ext) {
-  YAML::Node proxies, original_groups;
+  YAML::Node proxies;
+  YAML::Node original_groups(YAML::NodeType::Sequence);
+  const char *group_key =
+      ext.clash_new_field_name ? "proxy-groups" : "Proxy Group";
+  if (yamlnode[group_key].IsSequence())
+    original_groups = YAML::Clone(yamlnode[group_key]);
   std::vector<Proxy> nodelist;
   RemarkSet used_remarks;
   used_remarks.reserve(nodes.size());
@@ -1831,10 +1836,20 @@ void proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode,
       }
 
       // 健康检查配置
-      single_provider["health-check"]["enable"] = true;
-      single_provider["health-check"]["url"] =
-          "https://cp.cloudflare.com/generate_204";
-      single_provider["health-check"]["interval"] = 300;
+      YAML::Node health_check;
+      health_check["enable"] = ext.provider_health_check_enable;
+      if (ext.provider_health_check_enable) {
+        health_check["url"] = ext.provider_health_check_url;
+        health_check["interval"] = ext.provider_health_check_interval;
+        if (ext.provider_health_check_timeout >= 0)
+          health_check["timeout"] = ext.provider_health_check_timeout;
+        if (!ext.provider_health_check_lazy.is_undef())
+          health_check["lazy"] = ext.provider_health_check_lazy.get();
+        if (ext.provider_health_check_expected_status >= 0)
+          health_check["expected-status"] =
+              ext.provider_health_check_expected_status;
+      }
+      single_provider["health-check"] = health_check;
 
       // 添加 override 配置（如果用户指定了 udp 或 scv 参数）
       bool has_override = false;
@@ -1996,7 +2011,8 @@ void proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode,
 
     bool replace_flag = false;
     for (auto &&original_group : original_groups) {
-      if (original_group["name"].as<std::string>() == x.Name) {
+      if (original_group.IsMap() && original_group["name"].IsScalar() &&
+          original_group["name"].as<std::string>() == x.Name) {
         original_group.reset(singlegroup);
         replace_flag = true;
         break;

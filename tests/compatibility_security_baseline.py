@@ -78,7 +78,7 @@ LOCAL_GROUP_MATCHER_CONFIG = "data:text/plain;base64," + base64.urlsafe_b64encod
     ).encode()
 ).decode()
 SELECT_HEALTH_HTTP_URL = "http://wifi.vivo.com.cn/generate_204"
-SELECT_HEALTH_HTTPS_URL = "https://cp.cloudflare.com/generate_204"
+SELECT_HEALTH_HTTPS_URL = "https://www.gstatic.com/generate_204"
 SELECT_HEALTH_INI_CONFIG = "data:text/plain;base64," + base64.urlsafe_b64encode(
     "\n".join(
         (
@@ -861,6 +861,31 @@ class FixtureHandler(BaseHTTPRequestHandler):
                 f"ruleset=Proxy,http://{host}/issue-98-rules.list\n"
             ).encode()
             content_type = "text/plain; charset=utf-8"
+        elif request_path == "/external-clash-base-group.ini":
+            host = self.headers.get("Host", "127.0.0.1")
+            body = (
+                "[custom]\n"
+                "enable_rule_generator=false\n"
+                "custom_proxy_group=Generated`select`[]BaseFallback`.*\n"
+                f"clash_rule_base=http://{host}/clash-base-group.yaml\n"
+            ).encode()
+            content_type = "text/plain; charset=utf-8"
+        elif request_path == "/clash-base-group.yaml":
+            body = (
+                "proxies: []\n"
+                "proxy-groups:\n"
+                "  - name: BaseFallback\n"
+                "    type: fallback\n"
+                "    proxies: [DIRECT]\n"
+                "    url: https://www.gstatic.com/generate_204\n"
+                "    interval: 60\n"
+                "    timeout: 1000\n"
+                "    max-failed-times: 1\n"
+                "    lazy: false\n"
+                "    expected-status: 204\n"
+                "rules: []\n"
+            ).encode()
+            content_type = "application/yaml; charset=utf-8"
         elif request_path == "/external-singbox-modern.ini":
             host = self.headers.get("Host", "127.0.0.1")
             body = (
@@ -5185,6 +5210,50 @@ def proxy_group_block_from_output(output: str, group_name: str) -> str:
     return marker + following[:end]
 
 
+def clash_base_group_preservation_baseline(
+    base_url: str, fixture_base: str
+) -> None:
+    status, body, _ = request(
+        base_url,
+        "/sub",
+        {
+            "target": "clash",
+            "url": SUBSCRIPTION.strip(),
+            "config": fixture_base + "/external-clash-base-group.ini",
+        },
+    )
+    output = body.decode("utf-8", errors="replace")
+    if status != 200:
+        raise AssertionError(
+            "Clash Base group preservation request returned "
+            f"HTTP {status}: {output!r}"
+        )
+
+    base_group = proxy_group_block_from_output(output, "BaseFallback")
+    for expected in (
+        "    type: fallback\n",
+        "    proxies: [DIRECT]\n",
+        "    url: https://www.gstatic.com/generate_204\n",
+        "    interval: 60\n",
+        "    timeout: 1000\n",
+        "    max-failed-times: 1\n",
+        "    lazy: false\n",
+        "    expected-status: 204\n",
+    ):
+        if expected not in base_group:
+            raise AssertionError(
+                "Clash Base group lost a native field: "
+                f"{expected.strip()!r}\n{base_group}"
+            )
+
+    generated_group = proxy_group_block_from_output(output, "Generated")
+    if "BaseFallback" not in generated_group:
+        raise AssertionError(
+            "generated Clash group lost its Base group reference\n"
+            + generated_group
+        )
+
+
 def assert_select_health_group(
     output: str, group_name: str, expected_url: str, label: str
 ) -> None:
@@ -5299,6 +5368,100 @@ def select_health_check_output_baseline(base_url: str, fixture_base: str) -> Non
                 SELECT_HEALTH_HTTP_URL,
                 label,
             )
+
+
+def provider_health_check_config_output_baseline(
+    base_url: str, fixture_base: str
+) -> None:
+    source = fixture_base + "/subscription.txt"
+
+    def data_url(content: str) -> str:
+        encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
+        return "data:text/plain;base64," + encoded
+
+    cases = (
+        (
+            "INI",
+            data_url(
+                "[custom]\n"
+                "enable_rule_generator=false\n"
+                "proxy_provider_health_check_enable=true\n"
+                "proxy_provider_health_check_url=https://www.gstatic.com/generate_204\n"
+                "proxy_provider_health_check_interval=61\n"
+                "proxy_provider_health_check_timeout=1234\n"
+                "proxy_provider_health_check_lazy=false\n"
+                "proxy_provider_health_check_expected_status=204\n"
+            ),
+        ),
+        (
+            "TOML",
+            data_url(
+                "version = 1\n"
+                "[custom]\n"
+                "enable_rule_generator = false\n"
+                "proxy_provider_health_check_enable = true\n"
+                'proxy_provider_health_check_url = "https://www.gstatic.com/generate_204"\n'
+                "proxy_provider_health_check_interval = 61\n"
+                "proxy_provider_health_check_timeout = 1234\n"
+                "proxy_provider_health_check_lazy = false\n"
+                "proxy_provider_health_check_expected_status = 204\n"
+            ),
+        ),
+        (
+            "YAML",
+            data_url(
+                "custom:\n"
+                "  enable_rule_generator: false\n"
+                "  proxy_provider_health_check_enable: true\n"
+                "  proxy_provider_health_check_url: https://www.gstatic.com/generate_204\n"
+                "  proxy_provider_health_check_interval: 61\n"
+                "  proxy_provider_health_check_timeout: 1234\n"
+                "  proxy_provider_health_check_lazy: false\n"
+                "  proxy_provider_health_check_expected_status: 204\n"
+            ),
+        ),
+    )
+
+    expected_fields = {
+        "enable": "true",
+        "url": "https://www.gstatic.com/generate_204",
+        "interval": "61",
+        "timeout": "1234",
+        "lazy": "false",
+        "expected-status": "204",
+    }
+    for label, config in cases:
+        provider_name = "Health" + label
+        status, body, _ = request(
+            base_url,
+            "/sub",
+            {
+                "target": "clash",
+                "url": (
+                    f"provider:{provider_name},{source}"
+                    f"?case=provider-health-{label.lower()}"
+                ),
+                "config": config,
+            },
+        )
+        output = body.decode("utf-8", errors="replace")
+        if status != 200:
+            raise AssertionError(
+                f"{label} provider health-check request returned "
+                f"HTTP {status}: {output!r}"
+            )
+        block = provider_block_from_output(output, provider_name)
+        for field, value in expected_fields.items():
+            if re.search(
+                rf'(?m)^      {re.escape(field)}: ["\']?'
+                + re.escape(value)
+                + r'["\']?\s*$',
+                block,
+            ) is None:
+                raise AssertionError(
+                    f"{label} did not apply provider health-check "
+                    f"{field}={value!r}\n{block}"
+                )
 
 
 def provider_interval_from_output(output: str, provider_name: str) -> int:
@@ -12707,6 +12870,7 @@ def main() -> int:
             binary, log_capture=wireguard_outbound_logs
         ) as base_url:
             conversion_baselines(base_url, fixture_base, args.update_golden)
+            clash_base_group_preservation_baseline(base_url, fixture_base)
             local_group_matcher_baseline(base_url)
             singbox_modern_full_profile_baseline(
                 base_url,
@@ -12773,6 +12937,7 @@ def main() -> int:
             quanx_current_node_output_baseline(base_url, fixture_base)
             simple_target_protocol_baseline(base_url, fixture_base)
             provider_direct_default_output_baseline(base_url, fixture_base)
+            provider_health_check_config_output_baseline(base_url, fixture_base)
             select_health_check_output_baseline(base_url, fixture_base)
         if not wireguard_outbound_logs or (
             "SINGBOX_WIREGUARD_GENERATION schema=outbound nodes=1 peers=2"
